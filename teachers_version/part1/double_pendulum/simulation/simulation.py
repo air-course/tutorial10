@@ -180,14 +180,14 @@ class Simulator:
             ani_plot_counter += 1
 
         # plot base
-        self.animation_plots[ani_plot_counter].set_data(ee_pos[0][0], ee_pos[0][1])
+        self.animation_plots[ani_plot_counter].set_data([ee_pos[0][0]], [ee_pos[0][1]])
         ani_plot_counter += 1
 
         # desired trajectory (shadow)
         if self.desired_state or self.desired_traj:
             for link in range(self.plant.n_links):
                 self.animation_plots[ani_plot_counter].set_data(
-                    ee_pos_des[link + 1][0], ee_pos_des[link + 1][1]
+                    [ee_pos_des[link + 1][0]], [ee_pos_des[link + 1][1]]
                 )
                 ani_plot_counter += 1
 
@@ -202,7 +202,7 @@ class Simulator:
         # plot bodies
         for link in range(self.plant.n_links):
             self.animation_plots[ani_plot_counter].set_data(
-                ee_pos[link + 1][0], ee_pos[link + 1][1]
+                [ee_pos[link + 1][0]], [ee_pos[link + 1][1]]
             )
             ani_plot_counter += 1
 

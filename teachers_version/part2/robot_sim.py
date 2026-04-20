@@ -17,23 +17,6 @@ import sys
 import numpy as np
 import time
 
-def install_deepnote_nginx():
-    """Uses Ubuntu to install the NginX web server and configures it to serve
-    as a reverse proxy for MeshCat on Deepnote. The server will proxy
-    https://DEEPNOTE_PROJECT_ID:8080/PORT/ to http://127.0.0.1:PORT/ so
-    that multiple notebooks can all be served via Deepnote's only open port.
-    """
-    print("Installing NginX server for MeshCat on Deepnote...")
-    install_nginx = FindResourceOrThrow(
-        "drake/setup/deepnote/install_nginx")
-    proc = subprocess.run(
-        [install_nginx], encoding="utf-8", stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT)
-    if proc.returncode == 0:
-        return
-    print(proc.stdout, file=sys.stderr, end="")
-    proc.check_returncode()
-
 class RobotSim:
     def __init__(self, meshcat, urdf_file, q_0, dt):
         self.dt = dt
