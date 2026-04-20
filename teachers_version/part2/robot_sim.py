@@ -2,24 +2,16 @@ from pydrake.multibody.plant import AddMultibodyPlantSceneGraph, CoulombFriction
 from pydrake.multibody.parsing import Parser
 from pydrake.systems.framework import DiagramBuilder
 from pydrake.systems.analysis import Simulator
-from pydrake.visualization import AddDefaultVisualization
-from pydrake.geometry import StartMeshcat,MeshcatParams,Meshcat,HalfSpace,MeshcatVisualizer
-from pydrake.common import FindResourceOrThrow
-from IPython.display import display, HTML
-from pydrake.systems.framework import LeafSystem, Context, BasicVector
+from pydrake.geometry import HalfSpace
 from pydrake.math import RotationMatrix, RigidTransform
 
-import matplotlib.pyplot as plt
-
-import os
-import subprocess
-import sys
 import numpy as np
 import time
 
 class RobotSim:
-    def __init__(self, meshcat, urdf_file, q_0, dt):
+    def __init__(self, urdf_file, q_0, dt, robo_robot=None):
         self.dt = dt
+        self.robo_robot = robo_robot
         self.builder = DiagramBuilder()
         self.robot, self.scene_graph = AddMultibodyPlantSceneGraph(builder=self.builder, time_step=dt)
         Parser(self.robot, self.scene_graph).AddModels(urdf_file)
@@ -28,11 +20,6 @@ class RobotSim:
         self.robot.Finalize()
         self.robot.SetDefaultPositions(self.q_0)
 
-        host = os.environ["DEEPNOTE_PROJECT_ID"]
-        port = 7000
-        url = "https://" + host + ".deepnoteproject.com/" + str(port) + "/"
-        self.meshcat = meshcat
-        self.visualizer = MeshcatVisualizer.AddToBuilder(self.builder,self.scene_graph, self.meshcat)
         self.diagram = self.builder.Build()
         self.diagram_context = self.diagram.CreateDefaultContext()
 
@@ -44,58 +31,68 @@ class RobotSim:
 
         self.count = 0
 
-    def AddGround(self,plant):
-        """
-        Add a flat ground with friction
-        """
-
-        # Constants
-        transparent_color = np.array([0.5,0.5,0.5,0])
-        nontransparent_color = np.array([0.5,0.5,0.5,0.1])
-
+    def AddGround(self, plant):
+        transparent_color = np.array([0.5, 0.5, 0.5, 0])
         p_GroundOrigin = [0, 0.0, 0.0]
         R_GroundOrigin = RotationMatrix.MakeXRotation(0.0)
-        X_GroundOrigin = RigidTransform(R_GroundOrigin,p_GroundOrigin)
-
-        # Set Up Ground on Plant
-
-        surface_friction = CoulombFriction(
-                static_friction = 0.7,
-                dynamic_friction = 0.5)
+        X_GroundOrigin = RigidTransform(R_GroundOrigin, p_GroundOrigin)
+        surface_friction = CoulombFriction(static_friction=0.7, dynamic_friction=0.5)
         plant.RegisterCollisionGeometry(
-                plant.world_body(),
-                X_GroundOrigin,
-                HalfSpace(),
-                "ground_collision",
-                surface_friction)
+            plant.world_body(), X_GroundOrigin, HalfSpace(), "ground_collision", surface_friction)
         plant.RegisterVisualGeometry(
-                plant.world_body(),
-                X_GroundOrigin,
-                HalfSpace(),
-                "ground_visual",
-                transparent_color)  # transparent
-        
+            plant.world_body(), X_GroundOrigin, HalfSpace(), "ground_visual", transparent_color)
+
     def getJointNames(self):
         return self.robot.GetActuatorNames()
 
     def step(self):
-        self.simulator.AdvanceTo(self.dt*self.count)
+        self.simulator.AdvanceTo(self.dt * self.count)
         self.count += 1
+        self._update_visualization()
         time.sleep(self.dt)
-    
+
+    def _update_visualization(self):
+        pass
+
     def startRecording(self):
-        self.visualizer.StartRecording()
-    
+        pass
+
     def stopAndPublishRecording(self):
-        self.visualizer.StopRecording()
-        self.visualizer.PublishRecording()
+        pass
 
     def reset(self):
-        self.visualizer.DeleteRecording()
         self.simulator.Initialize()
-        
+        self.count = 0
+
+
 class Go2Sim(RobotSim):
-    def set_torques(self,tau):
+    # Joint names in pinocchio external order (indices 7-18 of get_positions())
+    _JOINT_NAMES = [
+        'bl_abad', 'bl_shoulder', 'bl_knee',
+        'br_abad', 'br_shoulder', 'br_knee',
+        'fl_abad', 'fl_shoulder', 'fl_knee',
+        'fr_abad', 'fr_shoulder', 'fr_knee',
+    ]
+
+    def _update_visualization(self):
+        if self.robo_robot is None:
+            return
+        q = self.get_positions()
+        # Build 4x4 transform for the floating base
+        # q[0:3] = [x, y, z], q[3:7] = [qx, qy, qz, qw]
+        qx, qy, qz, qw = q[3], q[4], q[5], q[6]
+        T = np.eye(4)
+        T[:3, :3] = np.array([
+            [1 - 2*(qy**2 + qz**2), 2*(qx*qy - qz*qw), 2*(qx*qz + qy*qw)],
+            [2*(qx*qy + qz*qw),     1 - 2*(qx**2 + qz**2), 2*(qy*qz - qx*qw)],
+            [2*(qx*qz - qy*qw),     2*(qy*qz + qx*qw), 1 - 2*(qx**2 + qy**2)],
+        ])
+        T[:3, 3] = q[0:3]
+        self.robo_robot.T = T
+        for i, name in enumerate(self._JOINT_NAMES):
+            self.robo_robot[name] = q[7 + i]
+
+    def set_torques(self, tau):
         tau_internal = np.zeros(12)
         tau_internal[0:6] = tau[6:12]
         tau_internal[6:12] = tau[0:6]
@@ -123,11 +120,11 @@ class Go2Sim(RobotSim):
         qd_external[6:12] = qd[12:18]
         qd_external[12:18] = qd[6:12]
         return qd_external
-    
-    def position_hold(self, q_r, duration = 5.0, k_p = 1000, k_d = 100):
+
+    def position_hold(self, q_r, duration=5.0, k_p=1000, k_d=100):
         t = 0.0
         while t < duration:
-            q   = self.get_positions()[7:19]
+            q = self.get_positions()[7:19]
             q_d = self.get_velocities()[6:18]
             tau = k_p * (q_r - q) + k_d * (-q_d)
             self.set_torques(tau)
