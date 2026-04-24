@@ -108,7 +108,7 @@ class Go2Sim(RobotSim):
         
         self.robo_robot.pos = base_pos.flatten()
         qw, qx, qy, qz = base_quat
-        self.robo_robot.rot = pinocchio.Quaternion(x=qx, y=qy, z=qz, w=qw).toRotationMatrix()
+        self.robo_robot.rot = pinocchio.Quaternion(w=qw, x=qx, y=qy, z=qz).toRotationMatrix()
 
         # for i, name in enumerate(self._JOINT_NAMES):
         #     self.robo_robot[name] = q[7 + i]
@@ -116,7 +116,10 @@ class Go2Sim(RobotSim):
         # Access the internal representation because iterating and setting each joint individually with 
         # `self.robo_robot[name] = angle` will trigger the forward kinematics for each joint assignment. 
         # This way, it is only triggered once
-        self.robo_robot._q = q[7:]
+        qlegs = np.zeros(12)
+        qlegs[0:6] = q[13:19]
+        qlegs[6:12] = q[7:13]
+        self.robo_robot._q = qlegs
 
     def set_torques(self, tau):
         tau_internal = np.zeros(12)
@@ -157,3 +160,4 @@ class Go2Sim(RobotSim):
             self.set_torques(tau)
             self.step()
             t += self.dt
+
