@@ -116,7 +116,10 @@ class Go2Sim(RobotSim):
         # Access the internal representation because iterating and setting each joint individually with 
         # `self.robo_robot[name] = angle` will trigger the forward kinematics for each joint assignment. 
         # This way, it is only triggered once
-        self.robo_robot._q = q[7:]
+        qlegs = np.zeros(12)
+        qlegs[0:6] = q[13:19]
+        qlegs[6:12] = q[7:13]
+        self.robo_robot._q = qlegs
 
     def set_torques(self, tau):
         tau_internal = np.zeros(12)
