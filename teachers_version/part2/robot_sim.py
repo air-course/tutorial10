@@ -4,6 +4,9 @@ from pydrake.systems.framework import DiagramBuilder
 from pydrake.systems.analysis import Simulator
 from pydrake.geometry import HalfSpace
 from pydrake.math import RotationMatrix, RigidTransform
+from pydrake.common.eigen_geometry import Quaternion
+
+import pinocchio
 
 import numpy as np
 import time
@@ -25,11 +28,12 @@ class RobotSim:
 
         self.simulator = Simulator(self.diagram, self.diagram_context)
         self.simulator.Initialize()
-        self.simulator.set_publish_every_time_step(False)
-        self.simulator.set_target_realtime_rate(1.0)
+        # self.simulator.set_publish_every_time_step(False)
+        # self.simulator.set_target_realtime_rate(1.0)
         self.plant_context = self.robot.GetMyContextFromRoot(self.simulator.get_mutable_context())
 
         self.count = 0
+        self._viz_update = max(1, int(0.02 / self.dt)) # Update visualization only every 0.02s
 
     def AddGround(self, plant):
         transparent_color = np.array([0.5, 0.5, 0.5, 0])
@@ -48,8 +52,27 @@ class RobotSim:
     def step(self):
         self.simulator.AdvanceTo(self.dt * self.count)
         self.count += 1
-        self._update_visualization()
-        time.sleep(self.dt)
+        if self.count % self._viz_update == 0: # update only every 0.02s
+            self._update_visualization()
+
+    # def step(self): 
+    # 	t0 = time.perf_counter()
+    # 	self.simulator.AdvanceTo(self.dt * self.count)  
+    # 	t1 = time.perf_counter()
+    # 	self.count += 1
+    # 	if self.count % self._viz_update == 0: # update only every 0.1s
+    #     	self._update_visualization()
+    # 	t2 = time.perf_counter()
+    
+    # 	sim_ms   = (t1 - t0) * 1000 
+    # 	viz_ms   = (t2 - t1) * 1000
+    # 	total_ms = (t2 - t0) * 1000 
+    # 	budget_ms = self.dt * 1000
+    # 	print(f"sim={sim_ms:.1f}ms  viz={viz_ms:.1f}ms  total={total_ms:.1f}ms  budget={budget_ms:.1f}ms")  
+    
+    # 	remaining = self.dt - (t2 - t0) 
+    # 	if remaining > 0:   
+    #     	time.sleep(remaining)
 
     def _update_visualization(self):
         pass
@@ -77,20 +100,23 @@ class Go2Sim(RobotSim):
     def _update_visualization(self):
         if self.robo_robot is None:
             return
-        q = self.get_positions()
-        # Build 4x4 transform for the floating base
-        # q[0:3] = [x, y, z], q[3:7] = [qx, qy, qz, qw]
-        qx, qy, qz, qw = q[3], q[4], q[5], q[6]
-        T = np.eye(4)
-        T[:3, :3] = np.array([
-            [1 - 2*(qy**2 + qz**2), 2*(qx*qy - qz*qw), 2*(qx*qz + qy*qw)],
-            [2*(qx*qy + qz*qw),     1 - 2*(qx**2 + qz**2), 2*(qy*qz - qx*qw)],
-            [2*(qx*qz - qy*qw),     2*(qy*qz + qx*qw), 1 - 2*(qx**2 + qy**2)],
-        ])
-        T[:3, 3] = q[0:3]
-        self.robo_robot.T = T
-        for i, name in enumerate(self._JOINT_NAMES):
-            self.robo_robot[name] = q[7 + i]
+
+        q = self.robot.GetPositions(self.plant_context)
+        
+        base_pos = q[4:7]
+        base_quat = q[0:4].flatten()
+        
+        self.robo_robot.pos = base_pos.flatten()
+        qw, qx, qy, qz = base_quat
+        self.robo_robot.rot = pinocchio.Quaternion(w=qw, x=qx, y=qy, z=qz).toRotationMatrix()
+
+        # for i, name in enumerate(self._JOINT_NAMES):
+        #     self.robo_robot[name] = q[7 + i]
+
+        # Access the internal representation because iterating and setting each joint individually with 
+        # `self.robo_robot[name] = angle` will trigger the forward kinematics for each joint assignment. 
+        # This way, it is only triggered once
+        self.robo_robot._q = q[7:]
 
     def set_torques(self, tau):
         tau_internal = np.zeros(12)
@@ -99,6 +125,7 @@ class Go2Sim(RobotSim):
         self.robot.get_actuation_input_port().FixValue(self.plant_context, tau_internal)
 
     def get_positions(self):
+        ''' Retrieve position from drake and reorder to [x, y, z, quaternion_base pos, joint_positions] '''
         q = self.robot.GetPositions(self.plant_context)
         q_external = np.zeros(19)
         q_external[0] = q[4]
